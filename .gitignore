@@ -1,0 +1,5 @@
+@"
+Authentication-Service/
+Order-Service/
+user-service/
+"@ >> .gitignore
