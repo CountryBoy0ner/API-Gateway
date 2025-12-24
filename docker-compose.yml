@@ -1,152 +1,25 @@
+version: "3.9"
+
 services:
-  # ===================== AUTH =====================
-  auth-db:
-    image: postgres:16-alpine
-    container_name: auth-db
-    environment:
-      POSTGRES_DB: ${AUTH_POSTGRES_DB:-auth_service}
-      POSTGRES_USER: ${AUTH_DB_USERNAME:-postgres}
-      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:-123}
-    volumes:
-      - auth-db-data:/var/lib/postgresql/data
-    networks: [innowise-net]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  auth-service:
+  gateway:
     build:
-      context: ./AuthenticationService
-      dockerfile: Dockerfile
-    container_name: auth-service
-    depends_on:
-      auth-db:
-        condition: service_healthy
-    environment:
-      SERVER_PORT: "8082"
-      DB_URL: jdbc:postgresql://auth-db:5432/${AUTH_POSTGRES_DB:-auth_service}
-      DB_USERNAME: ${AUTH_DB_USERNAME:-postgres}
-      DB_PASSWORD: ${AUTH_DB_PASSWORD:-123}
-      JWT_SECRET: ${JWT_SECRET:-super_long_random_secret_key_at_least_32_chars}
-      USER_SERVICE_URL: http://user-service:8080
-    ports:
-      - "8082:8082"
-    networks: [innowise-net]
-
-  # ===================== USER =====================
-  user-postgres:
-    image: postgres:16-alpine
-    container_name: user-postgres
-    environment:
-      POSTGRES_DB: ${USER_POSTGRES_DB:-user_service}
-      POSTGRES_USER: ${USER_POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${USER_POSTGRES_PASSWORD:-123}
-    volumes:
-      - user-pgdata:/var/lib/postgresql/data
-    networks: [innowise-net]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  user-redis:
-    image: redis:7-alpine
-    container_name: user-redis
-    command: ["redis-server", "--appendonly", "yes"]
-    volumes:
-      - user-redisdata:/data
-    networks: [innowise-net]
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  user-service:
-    build:
-      context: ./Userservice
-      dockerfile: Dockerfile
-    container_name: user-service
-    depends_on:
-      user-postgres:
-        condition: service_healthy
-      user-redis:
-        condition: service_healthy
-    environment:
-      SERVER_PORT: "8080"
-      SPRING_DATASOURCE_URL: jdbc:postgresql://user-postgres:5432/${USER_POSTGRES_DB:-user_service}
-      SPRING_DATASOURCE_USERNAME: ${USER_POSTGRES_USER:-postgres}
-      SPRING_DATASOURCE_PASSWORD: ${USER_POSTGRES_PASSWORD:-123}
-      SPRING_DATA_REDIS_HOST: user-redis
-      SPRING_DATA_REDIS_PORT: "6379"
-    ports:
-      - "8081:8080"
-    networks: [innowise-net]
-
-  # ===================== ORDER =====================
-  order-db:
-    image: postgres:16-alpine
-    container_name: order-db
-    environment:
-      POSTGRES_DB: ${ORDER_POSTGRES_DB:-orders}
-      POSTGRES_USER: ${ORDER_POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${ORDER_POSTGRES_PASSWORD:-123}
-    volumes:
-      - order-pgdata:/var/lib/postgresql/data
-    networks: [innowise-net]
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 3s
-      retries: 20
-
-  order-service:
-    build:
-      context: ./OrderService
-      dockerfile: Dockerfile
-    container_name: order-service
-    depends_on:
-      order-db:
-        condition: service_healthy
-    environment:
-      SERVER_PORT: "8083"
-      SPRING_DATASOURCE_URL: jdbc:postgresql://order-db:5432/${ORDER_POSTGRES_DB:-orders}
-      SPRING_DATASOURCE_USERNAME: ${ORDER_POSTGRES_USER:-postgres}
-      SPRING_DATASOURCE_PASSWORD: ${ORDER_POSTGRES_PASSWORD:-123}
-      USER_SERVICE_BASE_URL: http://user-service:8080/api/users
-    ports:
-      - "8083:8083"
-    networks: [innowise-net]
-
-  # ===================== GATEWAY =====================
-  api-gateway:
-    build:
-      context: ./APIGatewayService
+      context: .
       dockerfile: Dockerfile
     container_name: api-gateway
-    depends_on:
-      - auth-service
-      - user-service
-      - order-service
     environment:
       SERVER_PORT: "8084"
+
+      # 👇 вот эти ключи должны совпадать с application.properties
       AUTH_URL: "http://auth-service:8082"
       USER_URL: "http://user-service:8080"
       ORDER_URL: "http://order-service:8083"
-      JWT_SECRET: ${JWT_SECRET:-super_long_random_secret_key_at_least_32_chars}
+
+      JWT_SECRET: "super_long_random_secret_key_at_least_32_chars"
     ports:
       - "8084:8084"
-    networks: [innowise-net]
-
-volumes:
-  auth-db-data:
-  user-pgdata:
-  user-redisdata:
-  order-pgdata:
+    networks:
+      - innowise-micro-net
 
 networks:
-  innowise-net:
-    name: innowise-net
+  innowise-micro-net:
+    external: true
