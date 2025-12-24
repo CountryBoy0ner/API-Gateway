@@ -1,131 +1,152 @@
 services:
-  # ================= AUTH SERVICE =================
+  # ===================== AUTH =====================
   auth-db:
-    image: postgres:16
+    image: postgres:16-alpine
     container_name: auth-db
-    restart: always
     environment:
-      POSTGRES_DB: auth_service
-      POSTGRES_USER: auth_user
-      POSTGRES_PASSWORD: super_secret_password
-    ports:
-      - "5433:5432"    # внешний порт для дебага, можно убрать
+      POSTGRES_DB: ${AUTH_POSTGRES_DB:-auth_service}
+      POSTGRES_USER: ${AUTH_DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${AUTH_DB_PASSWORD:-123}
     volumes:
       - auth-db-data:/var/lib/postgresql/data
+    networks: [innowise-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   auth-service:
     build:
-      context: ./Authentication-Service
+      context: ./AuthenticationService
       dockerfile: Dockerfile
     container_name: auth-service
-    restart: always
     depends_on:
-      - auth-db
+      auth-db:
+        condition: service_healthy
     environment:
-      # используются в application.properties auth-сервиса
-      DB_URL: jdbc:postgresql://auth-db:5432/auth_service
-      DB_USERNAME: auth_user
-      DB_PASSWORD: super_secret_password
-      JWT_SECRET: super_long_random_secret_key_at_least_32_chars
+      SERVER_PORT: "8082"
+      DB_URL: jdbc:postgresql://auth-db:5432/${AUTH_POSTGRES_DB:-auth_service}
+      DB_USERNAME: ${AUTH_DB_USERNAME:-postgres}
+      DB_PASSWORD: ${AUTH_DB_PASSWORD:-123}
+      JWT_SECRET: ${JWT_SECRET:-super_long_random_secret_key_at_least_32_chars}
+      USER_SERVICE_URL: http://user-service:8080
     ports:
       - "8082:8082"
+    networks: [innowise-net]
 
-  # ================= USER SERVICE =================
-  user-db:
+  # ===================== USER =====================
+  user-postgres:
     image: postgres:16-alpine
     container_name: user-postgres
-    restart: unless-stopped
     environment:
-      POSTGRES_DB: user_service
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 123
-    ports:
-      - "5434:5432"
+      POSTGRES_DB: ${USER_POSTGRES_DB:-user_service}
+      POSTGRES_USER: ${USER_POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${USER_POSTGRES_PASSWORD:-123}
     volumes:
-      - user-db-data:/var/lib/postgresql/data
+      - user-pgdata:/var/lib/postgresql/data
+    networks: [innowise-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   user-redis:
     image: redis:7-alpine
     container_name: user-redis
     command: ["redis-server", "--appendonly", "yes"]
-    ports:
-      - "6380:6379"
     volumes:
-      - user-redis-data:/data
+      - user-redisdata:/data
+    networks: [innowise-net]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   user-service:
     build:
-      context: ./user-service
+      context: ./Userservice
+      dockerfile: Dockerfile
     container_name: user-service
-    restart: unless-stopped
     depends_on:
-      - user-db
-      - user-redis
+      user-postgres:
+        condition: service_healthy
+      user-redis:
+        condition: service_healthy
     environment:
-      SPRING_DATASOURCE_URL: jdbc:postgresql://user-db:5432/user_service
-      SPRING_DATASOURCE_USERNAME: postgres
-      SPRING_DATASOURCE_PASSWORD: 123
+      SERVER_PORT: "8080"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://user-postgres:5432/${USER_POSTGRES_DB:-user_service}
+      SPRING_DATASOURCE_USERNAME: ${USER_POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${USER_POSTGRES_PASSWORD:-123}
       SPRING_DATA_REDIS_HOST: user-redis
-      SPRING_DATA_REDIS_PORT: 6379
-      SERVER_PORT: 8080         # внутри контейнера
+      SPRING_DATA_REDIS_PORT: "6379"
     ports:
-      - "8081:8080"              # снаружи будешь ходить на 8081
+      - "8081:8080"
+    networks: [innowise-net]
 
-  # ================= ORDER SERVICE =================
+  # ===================== ORDER =====================
   order-db:
     image: postgres:16-alpine
-    container_name: order-service-db
-    restart: unless-stopped
+    container_name: order-db
     environment:
-      POSTGRES_DB: orders
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 123
-    ports:
-      - "5435:5432"
+      POSTGRES_DB: ${ORDER_POSTGRES_DB:-orders}
+      POSTGRES_USER: ${ORDER_POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${ORDER_POSTGRES_PASSWORD:-123}
     volumes:
-      - order-db-data:/var/lib/postgresql/data
+      - order-pgdata:/var/lib/postgresql/data
+    networks: [innowise-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   order-service:
     build:
-      context: ./Order-Service
+      context: ./OrderService
       dockerfile: Dockerfile
     container_name: order-service
-    restart: unless-stopped
     depends_on:
-      - order-db
-      - user-service
+      order-db:
+        condition: service_healthy
     environment:
-      DB_URL: jdbc:postgresql://order-db:5432/orders
-      DB_USERNAME: postgres
-      DB_PASSWORD: 123
-      # важно: внутри docker-а order-service должен ходить к user-service по имени контейнера
+      SERVER_PORT: "8083"
+      SPRING_DATASOURCE_URL: jdbc:postgresql://order-db:5432/${ORDER_POSTGRES_DB:-orders}
+      SPRING_DATASOURCE_USERNAME: ${ORDER_POSTGRES_USER:-postgres}
+      SPRING_DATASOURCE_PASSWORD: ${ORDER_POSTGRES_PASSWORD:-123}
       USER_SERVICE_BASE_URL: http://user-service:8080/api/users
     ports:
       - "8083:8083"
+    networks: [innowise-net]
 
-  # ================= API GATEWAY =================
+  # ===================== GATEWAY =====================
   api-gateway:
     build:
-      context: ./com.Innowise
+      context: ./APIGatewayService
       dockerfile: Dockerfile
     container_name: api-gateway
-    restart: unless-stopped
     depends_on:
       - auth-service
       - user-service
       - order-service
     environment:
-      # адреса сервисов ВНУТРИ docker-сети
-      AUTH_SERVICE_URL: http://auth-service:8082
-      USER_SERVICE_URL: http://user-service:8080
-      ORDER_SERVICE_URL: http://order-service:8083
-      # тот же секрет, что и в Auth-Service
-      JWT_SECRET: super_long_random_secret_key_at_least_32_chars
+      SERVER_PORT: "8084"
+      AUTH_URL: "http://auth-service:8082"
+      USER_URL: "http://user-service:8080"
+      ORDER_URL: "http://order-service:8083"
+      JWT_SECRET: ${JWT_SECRET:-super_long_random_secret_key_at_least_32_chars}
     ports:
-      - "8085:8084"  # ← было "8084:8084"
+      - "8084:8084"
+    networks: [innowise-net]
 
 volumes:
   auth-db-data:
-  user-db-data:
-  user-redis-data:
-  order-db-data:
+  user-pgdata:
+  user-redisdata:
+  order-pgdata:
+
+networks:
+  innowise-net:
+    name: innowise-net
