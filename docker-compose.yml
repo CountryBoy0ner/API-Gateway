@@ -9,7 +9,6 @@ services:
     environment:
       SERVER_PORT: "8084"
 
-      # 👇 вот эти ключи должны совпадать с application.properties
       AUTH_URL: "http://auth-service:8082"
       USER_URL: "http://user-service:8080"
       ORDER_URL: "http://order-service:8083"
